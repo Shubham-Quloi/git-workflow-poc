@@ -1,0 +1,68 @@
+name: PR Template Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [dev]
+
+jobs:
+  validate-pr-description:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR description
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = (context.payload.pull_request.body || '').replace(/\r\n/g, '\n');
+            // Ignore the grey hint comments, so only real answers count
+            const clean = body.replace(/<!--[\s\S]*?-->/g, '');
+            const errors = [];
+
+            function section(name) {
+              const re = new RegExp('##\\s*' + name + '[^\\n]*\\n([\\s\\S]*?)(?=\\n##\\s|$)', 'i');
+              const m = clean.match(re);
+              return m ? m[1].trim() : '';
+            }
+
+            // 1. Jira ticket
+            if (!/[A-Z][A-Z0-9]+-\d+/.test(section('Jira Ticket'))) {
+              errors.push('Jira Ticket: add a ticket key or link, e.g. PROJ-123');
+            }
+
+            // 2. Module
+            if (section('Module / Area Worked On').length < 2) {
+              errors.push('Module / Area Worked On: please fill it in');
+            }
+
+            // 3. Type of change
+            if (!/- \[x\]/i.test(section('Type of Change'))) {
+              errors.push('Type of Change: tick at least one option');
+            }
+
+            // 4. What changed
+            if (section('What Changed and Why').length < 10) {
+              errors.push('What Changed and Why: please describe the change');
+            }
+
+            // 5. Database changes
+            const db = section('Database Changes');
+            const noDb = /- \[x\]\s*No database changes/i.test(db);
+            const yesDb = /- \[x\]\s*Yes/i.test(db);
+            if (!noDb && !yesDb) {
+              errors.push('Database Changes: tick either "No database changes" or "Yes"');
+            } else if (yesDb) {
+              const rows = db.split('\n')
+                .filter(l => l.trim().startsWith('|'))
+                .filter(l => !/^\|\s*-/.test(l.trim()))
+                .slice(1);
+              const filled = rows.some(l => l.split('|').slice(1, -1).some(c => c.trim() !== ''));
+              if (!filled) {
+                errors.push('Database Changes: fill in the table (object type, name, purpose)');
+              }
+            }
+
+            if (errors.length > 0) {
+              core.setFailed('PR description is incomplete:\n- ' + errors.join('\n- '));
+            } else {
+              core.info('PR description looks complete.');
+            }
